@@ -5,14 +5,22 @@ require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
 const app = express();
 
-// Налаштування CORS для вашого фронтенду
+// Налаштування CORS
 app.use(cors({
   origin: ['https://app-health-monitoring.netlify.app', 'http://localhost:3000'],
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 
-// Підключення маршрутів
+// Логування запитів для діагностики
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+});
+
+// Маршрути
 const authRoutes = require('./routes/auth');
 const dataRoutes = require('./routes/data');
 const publicDataRoutes = require('./routes/publicData');
@@ -20,13 +28,13 @@ app.use('/auth', authRoutes);
 app.use('/api', dataRoutes);
 app.use('/public', publicDataRoutes);
 
-// Базовий маршрут для перевірки
+// Базовий маршрут
 app.get('/', (req, res) => {
   res.send('Сервер моніторингу здоров\'я працює!');
 });
 
-// Слухаємо порт і хост
-const PORT = process.env.PORT || 5000; // Змінено на 5000 для локального тестування
+// Запуск сервера
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Сервер запущено на порту ${PORT}`);
 });

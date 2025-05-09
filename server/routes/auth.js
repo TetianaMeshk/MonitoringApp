@@ -10,29 +10,58 @@ const admin = require('firebase-admin'); // Для доступу до FieldValu
 router.post('/register', async (req, res) => {
   const { email, password, name } = req.body;
 
+  console.log(`[POST /auth/register] Спроба реєстрації для email: ${email}, name: ${name}`);
+
   if (!email || !password || !name) {
+    console.warn(`[POST /auth/register] Відсутній email, пароль або ім’я`);
     return res.status(400).json({ message: 'Необхідно вказати email, пароль та ім\'я' });
   }
 
+  const apiKey = process.env.FIREBASE_API_KEY;
+  if (!apiKey) {
+    console.error('FIREBASE_API_KEY не визначено в .env');
+    return res.status(500).json({ message: 'Помилка конфігурації сервера' });
+  }
+
   try {
+    // Створюємо користувача через Firebase Admin SDK
     const userRecord = await auth.createUser({
       email,
       password,
       displayName: name,
     });
 
-    // Створюємо Custom Token для входу
-    const token = await admin.auth().createCustomToken(userRecord.uid);
+    // Використовуємо Firebase Auth REST API для входу, щоб отримати ID Token
+    const firebaseAuthEndpoint = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
+    const response = await fetch(firebaseAuthEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, returnSecureToken: true }),
+    });
 
-    // Запис у Firestore (опціонально)
+    const data = await response.json();
+    if (!response.ok) {
+      console.error('Помилка входу після реєстрації:', data);
+      await auth.deleteUser(userRecord.uid); // Видаляємо користувача, якщо вхід не вдався
+      return res.status(500).json({ message: 'Помилка входу після реєстрації' });
+    }
+
+    // Запис у Firestore
     await db.collection('users').doc(userRecord.uid).set({
       name,
       email,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      trainings: [],
+      completedTrainings: [],
+      meals: {},
     }, { merge: true });
 
-    // Повертаємо UID і токен клієнту
-    res.status(201).json({ uid: userRecord.uid, token });
+    res.status(201).json({
+      uid: userRecord.uid,
+      token: data.idToken, // Повертаємо Firebase ID Token
+      email: userRecord.email,
+      displayName: name,
+    });
   } catch (error) {
     console.error('Помилка реєстрації:', error);
     if (error.code === 'auth/email-already-exists') {
@@ -46,17 +75,18 @@ router.post('/register', async (req, res) => {
 // Логін користувача та отримання Firebase ID токена
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
-  const apiKey = process.env.FIREBASE_API_KEY; // Потрібно додати ваш Firebase Web API Key до .env
+  const apiKey = process.env.FIREBASE_API_KEY;
 
-   if (!email || !password) {
-       return res.status(400).send({ message: 'Необхідно вказати email та пароль' });
-   }
-   if (!apiKey) {
-       console.error('FIREBASE_API_KEY не визначено в .env');
-       return res.status(500).send({ message: 'Помилка конфігурації сервера' });
-   }
+  console.log(`[POST /auth/login] Спроба входу для email: ${email}`);
 
-
+  if (!email || !password) {
+    console.warn(`[POST /auth/login] Відсутній email або пароль`);
+    return res.status(400).send({ message: 'Необхідно вказати email та пароль' });
+  }
+  if (!apiKey) {
+    console.error('[POST /auth/login] FIREBASE_API_KEY не визначено');
+    return res.status(500).send({ message: 'Помилка конфігурації сервера' });
+  }
   const firebaseAuthEndpoint = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
 
   try {
@@ -115,6 +145,49 @@ router.post('/login', async (req, res) => {
   } catch (error) {
     console.error('Помилка сервера під час входу:', error);
     res.status(500).send({ message: 'Помилка сервера' });
+  }
+});
+
+// Google-авторизація
+router.post('/google-login', async (req, res) => {
+  const { idToken } = req.body;
+
+  if (!idToken) {
+    return res.status(400).json({ message: 'ID Token не надано' });
+  }
+
+  try {
+    // Верифікуємо Firebase ID Token
+    const decodedToken = await auth.verifyIdToken(idToken);
+    const userId = decodedToken.uid;
+
+    // Отримуємо дані користувача з Firebase Auth
+    const userRecord = await auth.getUser(userId);
+
+    // Оновлюємо або створюємо документ у Firestore
+    await db.collection('users').doc(userId).set(
+      {
+        email: userRecord.email,
+        name: userRecord.displayName || 'User',
+        photoURL: userRecord.photoURL || null,
+        trainings: [],
+        completedTrainings: [],
+        meals: {},
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    res.status(200).json({
+      token: idToken, // Повертаємо той самий ID Token
+      uid: userRecord.uid,
+      email: userRecord.email,
+      displayName: userRecord.displayName || 'User',
+      photoURL: userRecord.photoURL || null,
+    });
+  } catch (error) {
+    console.error('Помилка Google-входу:', error);
+    res.status(401).json({ message: 'Помилка авторизації через Google' });
   }
 });
 
