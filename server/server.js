@@ -7,7 +7,7 @@ const app = express();
 
 // Налаштування CORS для вашого фронтенду
 app.use(cors({
-  origin: 'https://app-health-monitoring.netlify.app',
+  origin: ['https://app-health-monitoring.netlify.app', 'http://localhost:3000'],
   credentials: true
 }));
 app.use(express.json());
@@ -26,7 +26,7 @@ app.get('/', (req, res) => {
 });
 
 // Слухаємо порт і хост
-const PORT = process.env.PORT || 5000; // Змінено з 3001 на 5000 для локального тестування
+const PORT = process.env.PORT || 5000; // Змінено на 5000 для локального тестування
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Сервер запущено на порту ${PORT}`);
 });
