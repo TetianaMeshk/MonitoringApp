@@ -1,3 +1,5 @@
+node_modules/
 .env
-*.json
-*.monitoringapp-d5ebc-firebase-adminsdk-fbsvc-8b87c3bee6.json
+*.pem
+*.key
+monitoringapp-d5ebc-firebase-adminsdk-fbsvc-8b87c3bee6.json
