@@ -26,7 +26,7 @@ app.get('/', (req, res) => {
 });
 
 // Слухаємо порт і хост
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 5000; // Змінено з 3001 на 5000 для локального тестування
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Сервер запущено на порту ${PORT}`);
 });

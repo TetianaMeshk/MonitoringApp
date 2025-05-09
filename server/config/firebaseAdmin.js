@@ -5,14 +5,10 @@ let serviceAccount;
 
 try {
   // На Render ключ передається як JSON-рядок у змінній середовища
-  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-  } else {
-    // Для локального тестування (опціонально)
-    const path = require('path');
-    const serviceAccountPath = path.resolve(__dirname, process.env.FIREBASE_SERVICE_ACCOUNT_KEY_PATH);
-    serviceAccount = require(serviceAccountPath);
+  if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT не визначено в змінних середовища');
   }
+  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 
   // Ініціалізація Firebase Admin SDK
   if (!admin.apps.length) {
