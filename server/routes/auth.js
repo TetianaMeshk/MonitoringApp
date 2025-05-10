@@ -121,9 +121,6 @@ router.post('/login', async (req, res) => {
           email: data.email,
           name: userData.name || data.displayName || null,
           photoURL: userData.photoURL || data.photoURL || null,
-          trainings: userData.trainings || [],
-          completedTrainings: userData.completedTrainings || [],
-          meals: userData.meals || {},
           createdAt: userData.createdAt || admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
@@ -170,14 +167,12 @@ router.post('/google-login', async (req, res) => {
     const userId = decodedToken.uid;
     const userRecord = await auth.getUser(userId);
 
+    // Оновлюємо лише необхідні поля, зберігаючи існуючі дані
     await db.collection('users').doc(userId).set(
       {
         email: userRecord.email,
         name: userRecord.displayName || 'User',
         photoURL: userRecord.photoURL || null,
-        trainings: [],
-        completedTrainings: [],
-        meals: {},
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
