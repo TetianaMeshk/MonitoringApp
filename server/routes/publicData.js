@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { db, auth } = require('../config/firebaseAdmin');
-const admin = require('firebase-admin');
+const { db } = require('../config/firebaseAdmin');
 
 console.log('[Routes/PublicData] Ініціалізація маршрутів publicData...');
 
@@ -48,32 +47,6 @@ router.post('/reviews', async (req, res) => {
   } catch (error) {
     console.error('[Routes/PublicData] Помилка при додаванні відгуку:', error);
     res.status(500).json({ message: 'Помилка сервера при додаванні відгуку' });
-  }
-});
-
-// Публічний маршрут для отримання раціону (з умовною автентифікацією)
-router.get('/meals', async (req, res) => {
-  console.log('[Routes/PublicData] Обробка GET /public/meals');
-  const token = req.cookies.authToken;
-
-  if (token) {
-    try {
-      const decodedToken = await auth.verifyIdToken(token);
-      const userId = decodedToken.uid;
-      const userDoc = await db.collection('users').doc(userId).get();
-      console.log(`[Routes/PublicData] Отримано дані раціону для UID: ${userId}`);
-      if (userDoc.exists) {
-        res.json({ meals: userDoc.data().meals || {} });
-      } else {
-        res.json({ meals: {} });
-      }
-    } catch (error) {
-      console.error('[Routes/PublicData] Помилка верифікації токена:', error);
-      res.json({ meals: {} });
-    }
-  } else {
-    console.log('[Routes/PublicData] Токен відсутній, повертаємо порожній раціон');
-    res.json({ meals: {} });
   }
 });
 
