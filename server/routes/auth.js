@@ -1,19 +1,25 @@
-// server/routes/auth.js
 const express = require('express');
 const router = express.Router();
 const { auth, db } = require('../config/firebaseAdmin');
-const fetch = require('node-fetch'); // Потрібно встановити: npm install node-fetch
-const authMiddleware = require('../middleware/authMiddleware'); // Підключення проміжного ПЗ
-const admin = require('firebase-admin'); // Для доступу до FieldValue
+const fetch = require('node-fetch');
+const authMiddleware = require('../middleware/authMiddleware');
+const admin = require('firebase-admin');
+
+// Встановлення cookie
+const setAuthCookie = (res, token) => {
+  res.cookie('authToken', token, {
+    httpOnly: true, // Захищаємо від XSS
+    secure: process.env.NODE_ENV === 'production', // Лише HTTPS у продакшені
+    sameSite: process.env.NODE_ENV === 'production' ? 'None' : 'Lax', // Крос-доменні запити
+    maxAge: 3600000, // 1 година
+  });
+};
 
 // Реєстрація користувача
 router.post('/register', async (req, res) => {
   const { email, password, name } = req.body;
 
-  console.log(`[POST /auth/register] Спроба реєстрації для email: ${email}, name: ${name}`);
-
   if (!email || !password || !name) {
-    console.warn(`[POST /auth/register] Відсутній email, пароль або ім’я`);
     return res.status(400).json({ message: 'Необхідно вказати email, пароль та ім\'я' });
   }
 
@@ -24,14 +30,14 @@ router.post('/register', async (req, res) => {
   }
 
   try {
-    // Створюємо користувача через Firebase Admin SDK
+    // Створюємо користувача
     const userRecord = await auth.createUser({
       email,
       password,
       displayName: name,
     });
 
-    // Використовуємо Firebase Auth REST API для входу, щоб отримати ID Token
+    // Виконуємо вхід через REST API для отримання ID Token
     const firebaseAuthEndpoint = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
     const response = await fetch(firebaseAuthEndpoint, {
       method: 'POST',
@@ -42,25 +48,32 @@ router.post('/register', async (req, res) => {
     const data = await response.json();
     if (!response.ok) {
       console.error('Помилка входу після реєстрації:', data);
-      await auth.deleteUser(userRecord.uid); // Видаляємо користувача, якщо вхід не вдався
+      await auth.deleteUser(userRecord.uid); // Видаляємо користувача при помилці
       return res.status(500).json({ message: 'Помилка входу після реєстрації' });
     }
 
     // Запис у Firestore
-    await db.collection('users').doc(userRecord.uid).set({
-      name,
-      email,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      trainings: [],
-      completedTrainings: [],
-      meals: {},
-    }, { merge: true });
+    await db.collection('users').doc(userRecord.uid).set(
+      {
+        email,
+        name,
+        photoURL: null,
+        trainings: [],
+        completedTrainings: [],
+        meals: {},
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    // Встановлюємо cookie
+    setAuthCookie(res, data.idToken);
 
     res.status(201).json({
       uid: userRecord.uid,
-      token: data.idToken, // Повертаємо Firebase ID Token
       email: userRecord.email,
       displayName: name,
+      photoURL: null,
     });
   } catch (error) {
     console.error('Помилка реєстрації:', error);
@@ -72,7 +85,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// Логін користувача та отримання Firebase ID токена
+// Логін користувача
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
   const apiKey = process.env.FIREBASE_API_KEY;
@@ -81,70 +94,65 @@ router.post('/login', async (req, res) => {
 
   if (!email || !password) {
     console.warn(`[POST /auth/login] Відсутній email або пароль`);
-    return res.status(400).send({ message: 'Необхідно вказати email та пароль' });
+    return res.status(400).json({ message: 'Необхідно вказати email та пароль' });
   }
   if (!apiKey) {
     console.error('[POST /auth/login] FIREBASE_API_KEY не визначено');
-    return res.status(500).send({ message: 'Помилка конфігурації сервера' });
+    return res.status(500).json({ message: 'Помилка конфігурації сервера' });
   }
+
   const firebaseAuthEndpoint = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
 
   try {
-    // Використовуємо Firebase Auth REST API для входу за email/паролем
     const response = await fetch(firebaseAuthEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, returnSecureToken: true })
+      body: JSON.stringify({ email, password, returnSecureToken: true }),
     });
 
     const data = await response.json();
 
     if (response.ok) {
-      // Успішний вхід через Firebase Auth REST API
-      // data.idToken - це Firebase ID токен
-      // data.localId - це UID користувача
-
-      // Отримання додаткових даних користувача з Firestore
       const userDoc = await db.collection('users').doc(data.localId).get();
       const userData = userDoc.exists ? userDoc.data() : {};
 
-      // Оновлюємо або створюємо документ Firestore, якщо він відсутній
-      // Це корисно для користувачів, які, можливо, зареєструвались не через наш backend
-      await db.collection('users').doc(data.localId).set({
+      await db.collection('users').doc(data.localId).set(
+        {
           email: data.email,
-          name: userData.name || data.displayName || null, // Використовуємо ім'я з Firestore, якщо є, інакше з Auth
-          photoURL: userData.photoURL || data.photoURL || null, // Використовуємо photoURL з Firestore, якщо є, інакше з Auth
+          name: userData.name || data.displayName || null,
+          photoURL: userData.photoURL || data.photoURL || null,
           trainings: userData.trainings || [],
           completedTrainings: userData.completedTrainings || [],
           meals: userData.meals || {},
-          createdAt: userData.createdAt || admin.firestore.FieldValue.serverTimestamp(), // Зберігаємо час створення
-      }, { merge: true }); // Використовуємо merge, щоб не стерти існуючі поля
+          createdAt: userData.createdAt || admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
 
-      res.send({
-        token: data.idToken, // Повертаємо Firebase ID токен на фронтенд
+      // Встановлюємо cookie
+      setAuthCookie(res, data.idToken);
+
+      res.json({
         uid: data.localId,
         email: data.email,
-        displayName: userData.name || data.displayName, // Повертаємо ім'я (з Firestore або Auth)
-        photoURL: userData.photoURL || data.photoURL // Повертаємо photoURL (з Firestore або Auth)
-        // Можна додати інші дані користувача з Firestore
+        displayName: userData.name || data.displayName,
+        photoURL: userData.photoURL || data.photoURL,
       });
     } else {
-      // Помилка входу
       console.error('Помилка входу через Firebase Auth REST API:', data);
       if (data.error && data.error.message === 'EMAIL_NOT_FOUND') {
-         res.status(401).send({ message: 'Користувача з такою поштою не знайдено' });
+        res.status(401).json({ message: 'Користувача з такою поштою не знайдено' });
       } else if (data.error && data.error.message === 'INVALID_PASSWORD') {
-         res.status(401).send({ message: 'Невірний пароль' });
+        res.status(401).json({ message: 'Невірний пароль' });
       } else if (data.error && data.error.message === 'USER_DISABLED') {
-         res.status(401).send({ message: 'Обліковий запис користувача заблоковано' });
-      }
-      else {
-        res.status(401).send({ message: 'Невірні облікові дані' });
+        res.status(401).json({ message: 'Обліковий запис користувача заблоковано' });
+      } else {
+        res.status(401).json({ message: 'Невірні облікові дані' });
       }
     }
   } catch (error) {
     console.error('Помилка сервера під час входу:', error);
-    res.status(500).send({ message: 'Помилка сервера' });
+    res.status(500).json({ message: 'Помилка сервера' });
   }
 });
 
@@ -157,14 +165,10 @@ router.post('/google-login', async (req, res) => {
   }
 
   try {
-    // Верифікуємо Firebase ID Token
     const decodedToken = await auth.verifyIdToken(idToken);
     const userId = decodedToken.uid;
-
-    // Отримуємо дані користувача з Firebase Auth
     const userRecord = await auth.getUser(userId);
 
-    // Оновлюємо або створюємо документ у Firestore
     await db.collection('users').doc(userId).set(
       {
         email: userRecord.email,
@@ -178,8 +182,10 @@ router.post('/google-login', async (req, res) => {
       { merge: true }
     );
 
+    // Встановлюємо cookie
+    setAuthCookie(res, idToken);
+
     res.status(200).json({
-      token: idToken, // Повертаємо той самий ID Token
       uid: userRecord.uid,
       email: userRecord.email,
       displayName: userRecord.displayName || 'User',
@@ -191,76 +197,65 @@ router.post('/google-login', async (req, res) => {
   }
 });
 
-// Отримання даних профілю користувача (захищений маршрут)
+// Вихід (очищення cookie)
+router.post('/logout', (req, res) => {
+  res.clearCookie('authToken');
+  res.json({ message: 'Вихід виконано' });
+});
+
+// Профіль (уже є, без змін)
 router.get('/profile', authMiddleware, async (req, res) => {
-  const userId = req.user.uid; // Отримуємо UID з верифікованого токена (з authMiddleware)
+  const userId = req.user.uid;
   try {
-    // Отримуємо дані користувача з Firestore
     const userDoc = await db.collection('users').doc(userId).get();
 
     if (!userDoc.exists) {
-      // Якщо документ у Firestore не існує, але токен дійсний (наприклад, Google Auth користувач без документа)
-      try {
-           const userAuth = await auth.getUser(userId);
-            // Створити документ у Firestore для майбутнього
-            await db.collection('users').doc(userId).set({
-              email: userAuth.email,
-              name: userAuth.displayName || null,
-              photoURL: userAuth.photoURL || null,
-              trainings: [],
-              completedTrainings: [],
-              meals: {},
-              createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true }); // Використовуємо merge
-
-           // Повертаємо дані з Firebase Auth + порожні масиви/об'єкти з Firestore
-           res.send({
-               uid: userAuth.uid,
-               email: userAuth.email,
-               name: userAuth.displayName || null, // Використовуємо displayName з Auth
-               photoURL: userAuth.photoURL || null,
-               trainings: [],
-               completedTrainings: [],
-               meals: {}
-           });
-
-      } catch (authError) {
-           console.error('Помилка отримання даних з Firebase Auth:', authError);
-           // Якщо навіть у Firebase Auth не знайдено (що малоймовірно, якщо токен дійсний)
-           res.status(404).send({ message: 'Дані користувача не знайдено' });
-      }
-
+      const userAuth = await auth.getUser(userId);
+      await db.collection('users').doc(userId).set(
+        {
+          email: userAuth.email,
+          name: userAuth.displayName || null,
+          photoURL: userAuth.photoURL || null,
+          trainings: [],
+          completedTrainings: [],
+          meals: {},
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      res.json({
+        uid: userAuth.uid,
+        email: userAuth.email,
+        name: userAuth.displayName || null,
+        photoURL: userAuth.photoURL || null,
+        trainings: [],
+        completedTrainings: [],
+        meals: {},
+      });
     } else {
-      // Якщо документ у Firestore існує, повертаємо дані з нього
       const userData = userDoc.data();
       if (!userData.email) {
-        try {
-          const userAuthRecord = await auth.getUser(userId);
-          // Оновлюємо Firestore
-          await db.collection('users').doc(userId).set({
-            email: userAuthRecord.email,
-          }, { merge: true });
-          // Оновлюємо локальний об'єкт
-          userData.email = userAuthRecord.email;
-        } catch (err) {
-          console.error('Помилка оновлення email у Firestore:', err);
-        }
+        const userAuthRecord = await auth.getUser(userId);
+        await db.collection('users').doc(userId).set(
+          { email: userAuthRecord.email },
+          { merge: true }
+        );
+        userData.email = userAuthRecord.email;
       }
-      res.send({
+      res.json({
         uid: userDoc.id,
-        email: userData.email,  // Тут бере з Firestore
+        email: userData.email,
         name: userData.name,
         photoURL: userData.photoURL,
         trainings: userData.trainings || [],
         completedTrainings: userData.completedTrainings || [],
-        meals: userData.meals || {}
+        meals: userData.meals || {},
       });
     }
   } catch (error) {
     console.error('Помилка при отриманні даних профілю:', error);
-    res.status(500).send({ message: 'Помилка сервера' });
+    res.status(500).json({ message: 'Помилка сервера' });
   }
 });
-
 
 module.exports = router;

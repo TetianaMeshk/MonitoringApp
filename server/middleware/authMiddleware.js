@@ -1,12 +1,10 @@
-// server/middleware/authMiddleware.js
-const { auth } = require('../config/firebaseAdmin'); // Виправлено імпорт
+const { auth } = require('../config/firebaseAdmin');
 
 const authMiddleware = async (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const token = req.cookies.authToken; // Отримуємо токен із cookie
 
   if (!token) {
-    console.warn(`[AuthMiddleware] Відсутній токен для ${req.method} ${req.originalUrl}`);
+    console.warn(`[AuthMiddleware] Відсутній токен авторизації для ${req.method} ${req.originalUrl}`);
     return res.status(401).json({ message: 'Токен не надано' });
   }
 

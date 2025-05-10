@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const cookieParser = require('cookie-parser'); // Додаємо cookie-parser
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
 const app = express();
@@ -8,13 +9,22 @@ const app = express();
 // Налаштування CORS
 app.use(cors({
   origin: ['https://app-health-monitoring.netlify.app', 'http://localhost:3000'],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  credentials: true, // Дозволяємо передачу cookies
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['Content-Length', 'X-Requested-With'],
 }));
+
+// Обробка CORS preflight-запитів
+app.options('*', cors());
+
+// Парсинг cookies
+app.use(cookieParser());
+
+// Парсинг JSON
 app.use(express.json());
 
-// Логування запитів для діагностики
+// Логування запитів
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
@@ -31,6 +41,12 @@ app.use('/public', publicDataRoutes);
 // Базовий маршрут
 app.get('/', (req, res) => {
   res.send('Сервер моніторингу здоров\'я працює!');
+});
+
+// Обробка помилок
+app.use((err, req, res, next) => {
+  console.error(`[Error] ${req.method} ${req.url}:`, err.message);
+  res.status(500).json({ message: 'Помилка сервера' });
 });
 
 // Запуск сервера
